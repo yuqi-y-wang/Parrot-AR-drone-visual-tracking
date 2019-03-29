@@ -1,0 +1,152 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <cstring>
+
+#include "kcftracker.hpp"
+
+#include <ros/ros.h>
+#include <cv_bridge/cv_bridge.h>    
+#include <image_transport/image_transport.h>
+#include <sensor_msgs/image_encodings.h>
+
+#include "KCF/BoundingBox.h"
+#include "std_msgs/Bool.h"
+
+using namespace std;
+using namespace cv;
+
+Mat frame;
+Rect roi;
+bool stopflag = false;
+bool init_flag = false;
+bool begintrack_flag = false;
+
+const std::string RECEIVE_IMG_TOPIC_NAME = "/camera/rgb/image";
+
+//received image callback
+void imageCallback(const sensor_msgs::ImageConstPtr& cam_image){
+cv_bridge::CvImagePtr cv_ptr;
+try
+{
+    cv_ptr = cv_bridge::toCvCopy(cam_image,sensor_msgs::image_encodings::BGR8);
+}
+
+catch (cv_bridge::Exception& e)
+{
+     ROS_ERROR("cv_bridge exception:%s",e.what());
+     return;
+}
+
+    frame= cv_ptr->image;
+    imshow("tracker",frame);
+    cvWaitKey(1);
+}
+
+// ROI callback
+void BoxMessageReceived(const KCF::BoundingBox& KCFbox)
+{
+    roi.x = KCFbox.x;
+    roi.y = KCFbox.y;
+    roi.width = KCFbox.width;
+    roi.height = KCFbox.height;
+
+    init_flag = true;
+}
+
+
+int main(int argc, char* argv[]) 
+{
+    ros::init(argc, argv, "KCF_node");  
+    ros::NodeHandle nh;   
+
+    image_transport::ImageTransport it(nh);  
+    //image_transport::Publisher image_pub = it.advertise( "KCF/image", 1); 
+    ros::Subscriber boundingbox_sub = nh.subscribe ( "KCF/boundingbox" ,1000, &BoxMessageReceived ) ;
+    image_transport::Subscriber sub = it.subscribe(RECEIVE_IMG_TOPIC_NAME, 1, imageCallback); 
+	ros::Publisher boundingbox_pub  = nh.advertise<KCF::BoundingBox>("KCF/boundingbox", 1000);
+
+
+     // Published ROI 
+     KCF::BoundingBox box;
+
+     // ROI selector
+     BoxExtractor ROIbox;
+
+    bool HOG = true;
+    bool FIXEDWINDOW = true;
+    bool MULTISCALE = true;
+    bool SILENT = true;
+    bool LAB = true;
+
+     // Create KCFTracker object
+    KCFTracker tracker(HOG, FIXEDWINDOW, MULTISCALE, LAB);
+     // Tracker results
+    Rect result;
+
+    ros::Rate loop_rate(50);  
+    while (nh.ok()) 
+    { 
+
+           if ( waitKey(1) == 'b' )
+           {
+                 stopflag = true; 
+           }
+
+           if ( stopflag )
+           {
+                 //select ROI
+                 Rect roi = ROIbox.extract("tracker", frame);
+
+                 //quit if ROI was not selected
+                 if (roi.width == 0 || roi.height == 0)
+                       break;
+
+                //publish ROI 
+                 box.x = roi.x;
+                 box.y = roi.y;
+                 box.width = roi.width;
+                 box.height = roi.height;
+                 boundingbox_pub.publish( box );
+
+                 stopflag = false;
+           }
+
+           if ( init_flag )
+           {
+  	             // initialize the tracker
+      	      tracker.init((Rect)roi, frame);
+
+      	      printf("Start the tracking process, press ESC to quit.\n");
+                 stopflag = false;
+                 init_flag = false;
+      	      begintrack_flag = true;
+           }
+
+           if ( begintrack_flag )
+           { 
+
+                  // stop the program if no more images
+            	if (frame.rows == 0 || frame.cols == 0)
+            	        break;
+
+      	       // update the tracking result
+      	       result = tracker.update(frame);
+               //boundingbox_pub.publish( result );
+
+      	       // draw the tracked object
+      	       rectangle(frame, result, Scalar(255, 0, 0), 2, 1);
+
+      	       // show image with the tracked object
+      	       imshow("tracker", frame);
+
+      	       //quit on ESC button
+      	       if (waitKey(1) == 27) 
+      	              return 0;
+       }
+
+        ros::spinOnce();  
+        loop_rate.sleep(); 
+    }
+}
