@@ -34,11 +34,13 @@ catkin_package(
 include_directories(include ${catkin_INCLUDE_DIRS})
 
 
-add_executable(control_node src/control.cpp)
-target_link_libraries(control_node ${catkin_LIBRARIES} ${OpenCV_LIBS})
+add_executable(control_node src/main.cpp src/controller.cpp )
+target_link_libraries(control_node ${catkin_LIBRARIES})
 add_dependencies(control_node KCF_generate_messages_cpp )
 
-  
+add_executable(test_node src/test.cpp )
+target_link_libraries(test_node ${catkin_LIBRARIES})
+add_dependencies(test_node KCF_generate_messages_cpp )
 
 
 
